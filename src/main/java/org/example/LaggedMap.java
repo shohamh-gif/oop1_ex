@@ -10,14 +10,17 @@ public class LaggedMap<K, V> {
     private Map<K, V> publishedMap;
     private Map<K, DraftEntry<V>> draftsMap;
     private Map<K, List<V>> historyMap;
+    private Map<K, V> backupMap;
 
     public LaggedMap(int draftSeconds) {
         this.draftSeconds = draftSeconds;
         this.publishedMap = new HashMap<>();
         this.draftsMap = new HashMap<>();
         this.historyMap = new HashMap<>();
+        this.backupMap = new HashMap<>();
 
         this.startManagerThread();
+        this.startBackupThread();
     }
 
     public void put(K key, V value) {
@@ -37,6 +40,11 @@ public class LaggedMap<K, V> {
     }
 
     public void abort() {
+        this.draftsMap.clear();
+    }
+
+    public void rollback() {
+        this.publishedMap = new HashMap<>(this.backupMap);
         this.draftsMap.clear();
     }
 
@@ -104,5 +112,19 @@ public class LaggedMap<K, V> {
             this.historyMap.put(key, new ArrayList<>());
         }
         this.historyMap.get(key).add(oldValue);
+    }
+
+    private void startBackupThread() {
+        Thread backupThread = new Thread(() -> {
+            while (true) {
+                try {
+                    Thread.sleep(60000);
+                    this.backupMap = new HashMap<>(this.publishedMap);
+                } catch (InterruptedException e) {
+                    break;
+                }
+            }
+        });
+        backupThread.start();
     }
 }
