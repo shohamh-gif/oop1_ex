@@ -24,6 +24,17 @@ public class LeggedMap<K, V> {
     }
 
     public V get(K key) {
-        return this.draftsMap.get(key).getValue();
+        if (this.draftsMap.containsKey(key)) {
+            DraftEntry<V> draft = this.draftsMap.get(key);
+            long currentTime = System.currentTimeMillis();
+            if (currentTime - draft.getCurrentTime() >= (this.draftSeconds * 1000)) {
+                V oldValue = this.publishedMap.get(key);
+                if (oldValue != null) {
+                }
+                this.publishedMap.put(key, draft.getValue());
+                this.draftsMap.remove(key);
+            }
+        }
+        return this.publishedMap.get(key);
     }
 }
