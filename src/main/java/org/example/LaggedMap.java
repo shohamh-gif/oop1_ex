@@ -16,7 +16,10 @@ public class LaggedMap<K, V> {
         this.publishedMap = new HashMap<>();
         this.draftsMap = new HashMap<>();
         this.historyMap = new HashMap<>();
+
+        this.startCleanupThread();
     }
+
 
     public void put(K key, V value) {
         long currentTime = System.currentTimeMillis();
@@ -31,21 +34,42 @@ public class LaggedMap<K, V> {
             if (currentTime - draft.getCurrentTime() >= (this.draftSeconds * 1000L)) {
                 V oldValue = this.publishedMap.get(key);
                 if (oldValue != null) {
-                    if (!this.historyMap.containsKey(key)) {
-                        this.historyMap.put(key, new ArrayList<>());
-                    } else {
-                        List<V> historyList = this.historyMap.get(key);
-                        historyList.add(oldValue);
-                        if (historyList.size() > 3) {
-                            historyList.remove(0);
-                        }
-                    }
-                } else {
-                    this.publishedMap.put(key, draft.getValue());
-                    this.draftsMap.remove(key);
+                    this.archiveOldValue(key, oldValue);
                 }
+                this.publishedMap.put(key, draft.getValue());
+                this.draftsMap.remove(key);
             }
         }
         return this.publishedMap.get(key);
+    }
+
+    private void archiveOldValue(K key, V oldValue) {
+        if (!this.historyMap.containsKey(key)) {
+            this.historyMap.put(key, new ArrayList<>());
+        }
+        List<V> historyList = this.historyMap.get(key);
+        historyList.add(oldValue);
+    }
+
+    public void abort() {
+        this.draftsMap.clear();
+    }
+
+    private void startCleanupThread() {
+        Thread cleaner = new Thread(() -> {
+            while (true) {
+                try {
+                    Thread.sleep(1000);
+                    for (List<V> historyList : this.historyMap.values()) {
+                        while (historyList.size() > 3) {
+                            historyList.removeFirst();
+                        }
+                    }
+                } catch (InterruptedException e) {
+                    break;
+                }
+            }
+        });
+        cleaner.start();
     }
 }
