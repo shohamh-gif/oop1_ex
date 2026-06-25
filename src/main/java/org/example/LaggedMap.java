@@ -17,9 +17,8 @@ public class LaggedMap<K, V> {
         this.draftsMap = new HashMap<>();
         this.historyMap = new HashMap<>();
 
-        this.startCleanupThread();
+        this.startManagerThread();
     }
-
 
     public void put(K key, V value) {
         long currentTime = System.currentTimeMillis();
@@ -28,48 +27,82 @@ public class LaggedMap<K, V> {
     }
 
     public V get(K key) {
-        if (this.draftsMap.containsKey(key)) {
-            DraftEntry<V> draft = this.draftsMap.get(key);
-            long currentTime = System.currentTimeMillis();
-            if (currentTime - draft.getCurrentTime() >= (this.draftSeconds * 1000L)) {
-                V oldValue = this.publishedMap.get(key);
-                if (oldValue != null) {
-                    this.archiveOldValue(key, oldValue);
-                }
-                this.publishedMap.put(key, draft.getValue());
-                this.draftsMap.remove(key);
-            }
-        }
         return this.publishedMap.get(key);
     }
 
-    private void archiveOldValue(K key, V oldValue) {
-        if (!this.historyMap.containsKey(key)) {
-            this.historyMap.put(key, new ArrayList<>());
-        }
-        List<V> historyList = this.historyMap.get(key);
-        historyList.add(oldValue);
+    public void remove(K key, boolean full) {
+        long currentTime = System.currentTimeMillis();
+        DraftEntry<V> removeDraft = new DraftEntry<>(full, currentTime);
+        this.draftsMap.put(key, removeDraft);
     }
 
     public void abort() {
         this.draftsMap.clear();
     }
 
-    private void startCleanupThread() {
-        Thread cleaner = new Thread(() -> {
+    private void startManagerThread() {
+        Thread managerThread = new Thread(() -> {
             while (true) {
                 try {
                     Thread.sleep(1000);
-                    for (List<V> historyList : this.historyMap.values()) {
-                        while (historyList.size() > 3) {
-                            historyList.removeFirst();
-                        }
-                    }
+                    this.processExpiredDrafts();
+                    this.cleanHistory();
                 } catch (InterruptedException e) {
-                    break;
+                    throw new RuntimeException(e);
                 }
             }
         });
-        cleaner.start();
+        managerThread.start();
+    }
+
+    private void processExpiredDrafts() {
+        long currentTime = System.currentTimeMillis();
+        List<K> keysToProcess = new ArrayList<>();
+        for (Map.Entry<K, DraftEntry<V>> entry : this.draftsMap.entrySet()) {
+            if (currentTime - entry.getValue().getCurrentTime() >= (this.draftSeconds * 1000L)) {
+                keysToProcess.add(entry.getKey());
+            }
+        }
+        for (K key : keysToProcess) {
+            DraftEntry<V> draftEntry = this.draftsMap.remove(key);
+            this.handleDraft(key, draftEntry);
+        }
+    }
+
+    private void handleDraft(K key, DraftEntry<V> draftEntry) {
+        if (draftEntry.isRemove()) {
+            if (draftEntry.isFullRemove()) {
+                this.publishedMap.remove(key);
+                this.historyMap.remove(key);
+            } else {
+                List<V> history = this.historyMap.get(key);
+                if (history != null && !history.isEmpty()) {
+                    this.publishedMap.put(key, history.getLast());
+                } else {
+                    this.publishedMap.remove(key);
+                }
+            }
+        } else {
+            V oldValue = this.publishedMap.get(key);
+            if (oldValue != null) {
+                this.archiveOldValue(key, oldValue);
+            }
+            this.publishedMap.put(key, draftEntry.getValue());
+        }
+    }
+
+    private void cleanHistory() {
+        for (List<V> historyList : this.historyMap.values()) {
+            while (historyList.size() > 3) {
+                historyList.removeFirst();
+            }
+        }
+    }
+
+    private void archiveOldValue(K key, V oldValue) {
+        if (!this.historyMap.containsKey(key)) {
+            this.historyMap.put(key, new ArrayList<>());
+        }
+        this.historyMap.get(key).add(oldValue);
     }
 }
